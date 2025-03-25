@@ -1,0 +1,32 @@
+{
+  "name": "google-sheet-as-sql",
+  "version": "1.0.0",
+  "description": "Use Google Sheets like an SQL database with full CRUD, filters, sorting, and more.",
+  "main": "index.js",
+  "author": "Vaibhav Panday",
+  "license": "MIT",
+  "keywords": [
+    "google-sheets",
+    "crud",
+    "sql",
+    "sheet",
+    "google-sheet-api",
+    "database",
+    "spreadsheet",
+    "filter",
+    "sort",
+    "sheetql"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vaibhavpanday/google-sheet-as-sql"
+  },
+  "bugs": {
+    "mail": "vaibhavpanday099@gmail.com",
+    "url": "https://github.com/vaibhavpanday/google-sheet-as-sql/issues"
+  },
+  "homepage": "https://github.com/vaibhavpanday/google-sheet-as-sql#readme",
+  "dependencies": {
+    "googleapis": "^148.0.0"
+  }
+}
