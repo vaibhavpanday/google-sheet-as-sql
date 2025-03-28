@@ -97,17 +97,27 @@ new GoogleSheetDB(credentials, sheetId, sheetName)
 ### ✅ Core Methods
 
 | Method                  | Description                                          |
-|-------------------------|------------------------------------------------------|
-| `createTable(columns)`  | Creates the sheet/tab and sets headers               |
-| `dropTable()`           | Deletes the sheet/tab entirely                       |
-| `truncateTable()`       | Clears all data, keeps header row                    |
-| `insertOne(obj)`        | Inserts a single row                                 |
-| `insertMany(arrayy)`    | Inserts array of rows                                |
-| `select(where, options)`| Reads rows with filtering, sorting, limits           |
-| `update(where, newData)`| Updates rows matching filters                        |
-| `delete(where)`         | Deletes rows matching filters                        |
-| `getTables()`           | Lists all sheet tabs                                 |
-| `showTableDetail()`     | Returns column names, total rows, preview row        |
+|-------------------------        |------------------------------------------------------|
+| `createTable(columns)`          | Creates the sheet/tab and sets headers               |
+| `dropTable()`                   | Deletes the sheet/tab entirely                       |
+| `truncateTable()`               | Clears all data, keeps header row                    |
+| `insertOne(obj)`                | Inserts a single row                                 |
+| `insertBeforeRow(where, data)`  | Inserts a single row before matches                  |
+| `insertAfterRow(where, data)`   | Inserts a single row after matches                   |
+| `replaceBeforeRow(where, data)` | Replaces the row before matches                      |
+| `insertMany(arrayy)`            | Inserts array of rows                                |
+| `select(where, options)`        | Reads rows with filtering, sorting, limits           |
+| `update(where, newData)`        | Updates rows matching filters                        |
+| `updateOrInsert(where, data)`   | Updates if exist otherwise insert rows               |
+| `delete(where)`                 | Deletes rows matching filters                        |
+| `getTables()`                   | Lists all sheet tabs                                 |
+| `showTableDetail()`             | Returns column names, total rows, preview row        |
+
+## Two additional update/insert features
+
+`updateOrInsertAfterRow(where, column, data)` : Update/insert after matchs
+`updateOrInsertBeforeRow(where, column, data, ignoreEmptyRows = false)` : Update/insert before matchs 
+
 
 ---
 

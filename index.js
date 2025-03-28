@@ -240,6 +240,452 @@ class GoogleSheetDB {
     };
   }
 
+
+  async updateOrInsert(where, newData) {
+    // Check if any row matches the where condition
+    const existingRows = await this.select(where);
+    if (existingRows.length > 0) {
+      // If matching rows exist, update them with newData
+      return await this.update(where, newData);
+    } else {
+      // If no matching row, merge where and newData to form a new row and insert it
+      const newRow = { ...where, ...newData };
+      return await this.insertOne(newRow);
+    }
+  }
+
+  async insertBeforeRow(where, newData) {
+    // Find the first row that matches the where condition
+    const matchingRows = await this.select(where);
+    if (matchingRows.length === 0) {
+      // If no matching row is found, simply insert newData at the end.
+      return await this.insertOne(newData);
+    }
+
+    // Get the target row number where the matching row is found.
+    const targetRow = matchingRows[0];
+    const targetRowNumber = targetRow._row; // e.g. if 'Alice' is in row 5, targetRowNumber = 5
+
+    // Retrieve sheet information to perform row insertion
+    const metadata = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.sheetId,
+    });
+    const sheetInfo = metadata.data.sheets.find(
+      sheet => sheet.properties.title === this.sheetName
+    );
+    if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+    const sheetTabId = sheetInfo.properties.sheetId;
+
+    // Calculate the zero-indexed insertion index (targetRowNumber - 1)
+    const insertionIndex = targetRowNumber - 1;
+
+    // Insert a new row at the target index (this pushes the target row down)
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.sheetId,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId: sheetTabId,
+                dimension: 'ROWS',
+                startIndex: insertionIndex,
+                endIndex: insertionIndex + 1,
+              },
+              inheritFromBefore: true,
+            },
+          },
+        ],
+      },
+    });
+
+    // Get headers and build the new row array
+    const headers = await this._getHeaders();
+    const newRow = headers.map(h => newData[h] || '');
+
+    // Update the newly inserted row (which now takes the targetRowNumber)
+    const range = `${this.sheetName}!A${targetRowNumber}:${String.fromCharCode(65 + headers.length - 1)}${targetRowNumber}`;
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.sheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [newRow] },
+    });
+
+    return { success: true, action: 'inserted', row: targetRowNumber, newData };
+  }
+  async replaceBeforeRow(where, newData) {
+    // Find the first row that matches the where condition (e.g., { name: 'Alice' })
+    const matchingRows = await this.select(where);
+    if (matchingRows.length === 0) {
+      // If no matching row is found, just insert the newData at the end.
+      return await this.insertOne(newData);
+    }
+    const targetRow = matchingRows[0];
+    let insertRowNumber = targetRow._row; // This is the row where "Alice" is found
+
+    // Get the headers for constructing row arrays
+    const headers = await this._getHeaders();
+
+    // If the target row is the first data row (row 2), we cannot update row 1 (the header)
+    if (insertRowNumber === 2) {
+      // Insert a new row at position 2 (which pushes the target row down)
+      const metadata = await this.sheets.spreadsheets.get({ spreadsheetId: this.sheetId });
+      const sheetInfo = metadata.data.sheets.find(
+        sheet => sheet.properties.title === this.sheetName
+      );
+      if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+      const sheetTabId = sheetInfo.properties.sheetId;
+
+      // Insert one row at index 1 (0-indexed for row 2)
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.sheetId,
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: sheetTabId,
+                  dimension: 'ROWS',
+                  startIndex: 1,
+                  endIndex: 2,
+                },
+                inheritFromBefore: true,
+              },
+            },
+          ],
+        },
+      });
+      // Update the newly inserted row (row 2) with newData
+      const newRow = headers.map(h => newData[h] || '');
+      const range = `${this.sheetName}!A2:${String.fromCharCode(65 + headers.length - 1)}2`;
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [newRow] },
+      });
+      return { success: true, action: 'inserted', row: 2, newData };
+    } else {
+      // Determine the row immediately before the target row
+      const rowBeforeNumber = insertRowNumber - 1;
+      const sheetData = await this._getSheetData();
+      const rowBefore = sheetData.find(row => row._row === rowBeforeNumber);
+
+      if (rowBefore) {
+        // If a row exists before the target row, update that row with newData.
+        const updatedRow = headers.map(h => (newData[h] !== undefined ? newData[h] : rowBefore[h]));
+        const range = `${this.sheetName}!A${rowBeforeNumber}:${String.fromCharCode(65 + headers.length - 1)}${rowBeforeNumber}`;
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [updatedRow] },
+        });
+        return { success: true, action: 'updated', row: rowBeforeNumber, newData };
+      } else {
+        // No row exists immediately before the target row – insert a new row there.
+        const metadata = await this.sheets.spreadsheets.get({ spreadsheetId: this.sheetId });
+        const sheetInfo = metadata.data.sheets.find(
+          sheet => sheet.properties.title === this.sheetName
+        );
+        if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+        const sheetTabId = sheetInfo.properties.sheetId;
+
+        // Insert a new row at the correct position.
+        // Note: The API uses zero-indexed indices. To insert before row `rowBeforeNumber`,
+        // set startIndex to rowBeforeNumber - 1.
+        await this.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: this.sheetId,
+          requestBody: {
+            requests: [
+              {
+                insertDimension: {
+                  range: {
+                    sheetId: sheetTabId,
+                    dimension: 'ROWS',
+                    startIndex: rowBeforeNumber - 1,
+                    endIndex: rowBeforeNumber,
+                  },
+                  inheritFromBefore: true,
+                },
+              },
+            ],
+          },
+        });
+        // Now update the inserted row with newData.
+        const newRow = headers.map(h => newData[h] || '');
+        const range = `${this.sheetName}!A${rowBeforeNumber}:${String.fromCharCode(65 + headers.length - 1)}${rowBeforeNumber}`;
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [newRow] },
+        });
+        return { success: true, action: 'inserted', row: rowBeforeNumber, newData };
+      }
+    }
+  }
+
+  async insertAfterRow(where, newData) {
+    // Find the first row that matches the where condition
+    const matchingRows = await this.select(where);
+    if (matchingRows.length === 0) {
+      // If no matching row is found, simply insert newData at the end.
+      return await this.insertOne(newData);
+    }
+
+    // Get the target row number where the matching row is found.
+    const targetRow = matchingRows[0];
+    const targetRowNumber = targetRow._row; // e.g. if 'Alice' is in row 5, targetRowNumber = 5
+
+    // Retrieve sheet information to perform row insertion
+    const metadata = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.sheetId,
+    });
+    const sheetInfo = metadata.data.sheets.find(
+      sheet => sheet.properties.title === this.sheetName
+    );
+    if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+    const sheetTabId = sheetInfo.properties.sheetId;
+
+    // Calculate the zero-indexed insertion index.
+    // For after insertion, if target row is at one-indexed row X, then we insert at index X
+    // so the new row becomes one-indexed row X+1.
+    const insertionIndex = targetRowNumber;
+
+    // Insert a new row at the insertion index (this pushes the target row's subsequent rows down)
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.sheetId,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId: sheetTabId,
+                dimension: 'ROWS',
+                startIndex: insertionIndex,
+                endIndex: insertionIndex + 1,
+              },
+              inheritFromBefore: true,
+            },
+          },
+        ],
+      },
+    });
+
+    // New inserted row number is targetRowNumber + 1
+    const newRowNumber = targetRowNumber + 1;
+
+    // Get headers and build the new row array
+    const headers = await this._getHeaders();
+    const newRow = headers.map(h => newData[h] || '');
+
+    // Update the newly inserted row with newData
+    const range = `${this.sheetName}!A${newRowNumber}:${String.fromCharCode(65 + headers.length - 1)}${newRowNumber}`;
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.sheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [newRow] },
+    });
+
+    return { success: true, action: 'inserted', row: newRowNumber, newData };
+  }
+
+  async updateOrInsertBeforeRow(where, uniqueKey, newData, ignoreEmptyRows = false) {
+    // Find the first row that matches the "where" condition.
+    const matchingRows = await this.select(where);
+    if (matchingRows.length === 0) {
+      // If no matching row is found, simply insert newData at the end.
+      return await this.insertOne(newData);
+    }
+    const targetRow = matchingRows[0];
+    const targetRowNumber = targetRow._row; // e.g., if the target row is 10
+
+    // Get headers for constructing the row.
+    const headers = await this._getHeaders();
+
+    // Ensure newData has the uniqueKey property.
+    if (!newData.hasOwnProperty(uniqueKey)) {
+      throw new Error(`newData must contain the unique key '${uniqueKey}'`);
+    }
+
+    // Retrieve all sheet data.
+    const sheetData = await this._getSheetData();
+    // Filter for rows above the target row.
+    const rowsBefore = sheetData.filter(row => row._row < targetRowNumber);
+
+    // First, check if any row above has the same unique key value.
+    const existingRow = rowsBefore.find(row => row[uniqueKey] === newData[uniqueKey]);
+    if (existingRow) {
+      const rowNumber = existingRow._row;
+      const updatedRow = headers.map(h => newData[h] !== undefined ? newData[h] : existingRow[h]);
+      const range = `${this.sheetName}!A${rowNumber}:${String.fromCharCode(65 + headers.length - 1)}${rowNumber}`;
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [updatedRow] },
+      });
+      return { success: true, action: 'updated', row: rowNumber, newData };
+    }
+
+    // If ignoreEmptyRows is true, check for contiguous empty rows immediately above the target row.
+    if (ignoreEmptyRows) {
+      // Build a map for quick access by row number.
+      const rowMap = {};
+      sheetData.forEach(row => { rowMap[row._row] = row; });
+      let emptyRowCandidate = null;
+      // Iterate downward from targetRowNumber - 1 to row 2 (first data row).
+      // We want the topmost row in the contiguous empty block.
+      for (let r = targetRowNumber - 1; r >= 2; r--) {
+        // If the row isn't returned, assume it's empty.
+        const rowObj = rowMap[r];
+        const isEmpty = rowObj
+          ? headers.every(h => !rowObj[h] || rowObj[h] === '')
+          : true;
+        if (isEmpty) {
+          emptyRowCandidate = r; // update candidate with the current (lower) row number
+        } else {
+          // As soon as we hit a non-empty row, break out.
+          break;
+        }
+      }
+      if (emptyRowCandidate !== null) {
+        // Update the empty row found (i.e. the row immediately after the last non-empty row).
+        const rowNumber = emptyRowCandidate;
+        const updatedRow = headers.map(h => newData[h] !== undefined ? newData[h] : '');
+        const range = `${this.sheetName}!A${rowNumber}:${String.fromCharCode(65 + headers.length - 1)}${rowNumber}`;
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range,
+          valueInputOption: 'USER_ENTERED',
+          resource: { values: [updatedRow] },
+        });
+        return { success: true, action: 'updated (empty row)', row: rowNumber, newData };
+      }
+    }
+
+    // If no existing row or empty row is found, insert a new row before the target row.
+    const metadata = await this.sheets.spreadsheets.get({ spreadsheetId: this.sheetId });
+    const sheetInfo = metadata.data.sheets.find(sheet => sheet.properties.title === this.sheetName);
+    if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+    const sheetTabId = sheetInfo.properties.sheetId;
+
+    // Calculate the zero-indexed insertion index (targetRowNumber - 1).
+    const insertionIndex = targetRowNumber - 1;
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.sheetId,
+      requestBody: {
+        requests: [{
+          insertDimension: {
+            range: {
+              sheetId: sheetTabId,
+              dimension: 'ROWS',
+              startIndex: insertionIndex,
+              endIndex: insertionIndex + 1,
+            },
+            inheritFromBefore: true,
+          },
+        }],
+      },
+    });
+
+    // After insertion, the new row occupies the targetRowNumber.
+    const newRowNumber = targetRowNumber;
+    const newRow = headers.map(h => newData[h] || '');
+    const range = `${this.sheetName}!A${newRowNumber}:${String.fromCharCode(65 + headers.length - 1)}${newRowNumber}`;
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.sheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [newRow] },
+    });
+    return { success: true, action: 'inserted', row: newRowNumber, newData };
+  }
+
+
+
+  async updateOrInsertAfterRow(where, uniqueKey, newData) {
+    // Find the first row that matches the "where" condition.
+    const matchingRows = await this.select(where);
+    if (matchingRows.length === 0) {
+      // If no matching row is found, insert newData at the end.
+      return await this.insertOne(newData);
+    }
+    const targetRow = matchingRows[0];
+    const targetRowNumber = targetRow._row; // e.g. if the target row is 5
+
+    // Get headers for constructing the row.
+    const headers = await this._getHeaders();
+
+    // Ensure newData has the uniqueKey property.
+    if (!newData.hasOwnProperty(uniqueKey)) {
+      throw new Error(`newData must contain the unique key '${uniqueKey}'`);
+    }
+
+    // Retrieve all sheet data and filter for rows after the target row.
+    const sheetData = await this._getSheetData();
+    const rowsAfter = sheetData.filter(row => row._row > targetRowNumber);
+
+    // Look for a row among those after that has the same unique key value.
+    const existingRow = rowsAfter.find(row => row[uniqueKey] === newData[uniqueKey]);
+
+    if (existingRow) {
+      // Update the existing row with newData.
+      const rowNumber = existingRow._row;
+      const updatedRow = headers.map(h => newData[h] !== undefined ? newData[h] : existingRow[h]);
+      const range = `${this.sheetName}!A${rowNumber}:${String.fromCharCode(65 + headers.length - 1)}${rowNumber}`;
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [updatedRow] },
+      });
+      return { success: true, action: 'updated', row: rowNumber, newData };
+    } else {
+      // Otherwise, insert a new row after the target row.
+      const metadata = await this.sheets.spreadsheets.get({ spreadsheetId: this.sheetId });
+      const sheetInfo = metadata.data.sheets.find(sheet => sheet.properties.title === this.sheetName);
+      if (!sheetInfo) throw new Error(`Sheet ${this.sheetName} not found`);
+      const sheetTabId = sheetInfo.properties.sheetId;
+
+      // For after insertion, the zero-indexed insertion index is the targetRowNumber.
+      const insertionIndex = targetRowNumber;
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.sheetId,
+        requestBody: {
+          requests: [{
+            insertDimension: {
+              range: {
+                sheetId: sheetTabId,
+                dimension: 'ROWS',
+                startIndex: insertionIndex,
+                endIndex: insertionIndex + 1,
+              },
+              inheritFromBefore: true,
+            },
+          }],
+        },
+      });
+
+      // After insertion, the new row occupies targetRowNumber + 1.
+      const newRowNumber = targetRowNumber + 1;
+      const newRow = headers.map(h => newData[h] || '');
+      const range = `${this.sheetName}!A${newRowNumber}:${String.fromCharCode(65 + headers.length - 1)}${newRowNumber}`;
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [newRow] },
+      });
+      return { success: true, action: 'inserted', row: newRowNumber, newData };
+    }
+  }
+
+
+
   async delete(where) {
     const data = await this._getSheetData();
     const matching = this._applyFilter(data, where);
