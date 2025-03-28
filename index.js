@@ -171,38 +171,46 @@ class GoogleSheetDB {
   async insertOne(rowObj) {
     const headers = await this._getHeaders();
     const row = headers.map(h => rowObj[h] || '');
-
+    
+    // Restrict the range to only the columns in your header (e.g., A to last header column)
+    const lastColLetter = String.fromCharCode(65 + headers.length - 1); // e.g., 'C' for 3 headers
+    const range = `${this.sheetName}!A:${lastColLetter}`;
+    
     const res = await this.sheets.spreadsheets.values.append({
       spreadsheetId: this.sheetId,
-      range: this.sheetName,
+      range,
       valueInputOption: 'USER_ENTERED',
       resource: { values: [row] },
     });
-
+  
     return {
       success: true,
       updatedRange: res.data.updates.updatedRange,
       insertedData: rowObj,
     };
   }
+  
   async insertMany(data) {
     const headers = await this._getHeaders();
     const rows = [];
-
+  
     const dataArray = Array.isArray(data) ? data : [data];
-
+  
     for (const rowObj of dataArray) {
       const row = headers.map(h => rowObj[h] || '');
       rows.push(row);
     }
-
+  
+    const lastColLetter = String.fromCharCode(65 + headers.length - 1);
+    const range = `${this.sheetName}!A:${lastColLetter}`;
+    
     const res = await this.sheets.spreadsheets.values.append({
       spreadsheetId: this.sheetId,
-      range: this.sheetName,
+      range,
       valueInputOption: 'USER_ENTERED',
       resource: { values: rows },
     });
-
+  
     return {
       success: true,
       insertedCount: rows.length,
@@ -797,6 +805,181 @@ class GoogleSheetDB {
       };
     } catch (err) {
       return { success: false, error: err.message };
+    }
+  }
+
+
+  _sqlToNosqlConverter(sqlQuery) {
+    const query = sqlQuery.trim();
+    const upperQuery = query.toUpperCase();
+
+    // CREATE TABLE: e.g., "CREATE TABLE myTable (col1, col2, col3)"
+    if (upperQuery.startsWith('CREATE TABLE')) {
+      const match = query.match(/CREATE\s+TABLE\s+\w+\s*\(([^)]+)\)/i);
+      if (!match) throw new Error('Invalid CREATE TABLE syntax');
+      const columns = match[1].split(',').map(col => col.trim());
+      return { operation: 'createTable', args: { columns } };
+    }
+
+    // DROP TABLE: e.g., "DROP TABLE myTable"
+    if (upperQuery.startsWith('DROP TABLE')) {
+      return { operation: 'dropTable', args: {} };
+    }
+
+    // TRUNCATE TABLE: e.g., "TRUNCATE TABLE myTable"
+    if (upperQuery.startsWith('TRUNCATE TABLE')) {
+      return { operation: 'truncateTable', args: {} };
+    }
+
+    // INSERT INTO: e.g., "INSERT INTO myTable (col1, col2) VALUES ('val1', 'val2')"
+    if (upperQuery.startsWith('INSERT INTO')) {
+      const match = query.match(/INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s+VALUES\s*\(([^)]+)\)/i);
+      if (!match) throw new Error('Invalid INSERT INTO syntax');
+      const columns = match[1].split(',').map(col => col.trim());
+      const values = match[2]
+        .split(',')
+        .map(val => val.trim().replace(/^['"]|['"]$/g, ''));
+      const obj = {};
+      columns.forEach((col, index) => {
+        obj[col] = values[index];
+      });
+      return { operation: 'insertOne', args: { obj } };
+    }
+
+    // SELECT: e.g., "SELECT * FROM myTable WHERE col1 = 'val1' AND col2 = 'val2' ORDER BY col1 DESC LIMIT 10 OFFSET 5"
+    if (upperQuery.startsWith('SELECT')) {
+      const selectMatch = query.match(/SELECT\s+(.*?)\s+FROM\s+\w+/i);
+      if (!selectMatch) throw new Error('Invalid SELECT syntax');
+      const fieldsPart = selectMatch[1].trim();
+      let selectFields = undefined;
+      if (fieldsPart !== '*' && fieldsPart !== '') {
+        selectFields = fieldsPart.split(',').map(f => f.trim());
+      }
+
+      let where = {};
+      const whereMatch = query.match(/WHERE\s+(.+?)(ORDER BY|LIMIT|OFFSET|$)/i);
+      if (whereMatch) {
+        const conditionsStr = whereMatch[1].trim();
+        const conditions = conditionsStr.split(/\s+AND\s+/i);
+        conditions.forEach(condition => {
+          const parts = condition.split('=');
+          if (parts.length === 2) {
+            const key = parts[0].trim();
+            const value = parts[1].trim().replace(/^['"]|['"]$/g, '');
+            where[key] = value;
+          }
+        });
+      }
+
+      let options = {};
+      const orderMatch = query.match(/ORDER BY\s+(.+?)(LIMIT|OFFSET|$)/i);
+      if (orderMatch) {
+        const orderStr = orderMatch[1].trim();
+        const orders = orderStr.split(',').map(order => {
+          const parts = order.trim().split(/\s+/);
+          return { column: parts[0], direction: parts[1] ? parts[1].toLowerCase() : 'asc' };
+        });
+        options.orderBy = orders;
+      }
+      const limitMatch = query.match(/LIMIT\s+(\d+)/i);
+      if (limitMatch) {
+        options.limit = parseInt(limitMatch[1], 10);
+      }
+      const offsetMatch = query.match(/OFFSET\s+(\d+)/i);
+      if (offsetMatch) {
+        options.offset = parseInt(offsetMatch[1], 10);
+      }
+      if (selectFields) {
+        options.selectFields = selectFields;
+      }
+
+      return { operation: 'select', args: { where, options } };
+    }
+
+    // UPDATE: e.g., "UPDATE myTable SET col1 = 'newVal', col2 = 'anotherVal' WHERE col3 = 'val3'"
+    if (upperQuery.startsWith('UPDATE')) {
+      const updateMatch = query.match(/UPDATE\s+\w+\s+SET\s+(.+?)\s+WHERE\s+(.+)/i);
+      if (!updateMatch) throw new Error('Invalid UPDATE syntax');
+      const setPart = updateMatch[1].trim();
+      const wherePart = updateMatch[2].trim();
+
+      let newData = {};
+      setPart.split(',').forEach(pair => {
+        const parts = pair.split('=');
+        if (parts.length === 2) {
+          const key = parts[0].trim();
+          const value = parts[1].trim().replace(/^['"]|['"]$/g, '');
+          newData[key] = value;
+        }
+      });
+
+      let where = {};
+      wherePart.split(/\s+AND\s+/i).forEach(condition => {
+        const parts = condition.split('=');
+        if (parts.length === 2) {
+          const key = parts[0].trim();
+          const value = parts[1].trim().replace(/^['"]|['"]$/g, '');
+          where[key] = value;
+        }
+      });
+
+      return { operation: 'update', args: { where, newData } };
+    }
+
+    // DELETE: e.g., "DELETE FROM myTable WHERE col1 = 'val1'"
+    if (upperQuery.startsWith('DELETE')) {
+      const deleteMatch = query.match(/DELETE\s+FROM\s+\w+\s+WHERE\s+(.+)/i);
+      if (!deleteMatch) throw new Error('Invalid DELETE syntax');
+      const wherePart = deleteMatch[1].trim();
+      let where = {};
+      wherePart.split(/\s+AND\s+/i).forEach(condition => {
+        const parts = condition.split('=');
+        if (parts.length === 2) {
+          const key = parts[0].trim();
+          const value = parts[1].trim().replace(/^['"]|['"]$/g, '');
+          where[key] = value;
+        }
+      });
+      return { operation: 'delete', args: { where } };
+    }
+
+    // GET TABLES (non-standard SQL)
+    if (upperQuery === 'GET TABLES') {
+      return { operation: 'getTables', args: {} };
+    }
+
+    // SHOW TABLE DETAIL (non-standard SQL)
+    if (upperQuery === 'SHOW TABLE DETAIL') {
+      return { operation: 'showTableDetail', args: {} };
+    }
+
+    throw new Error('Unsupported SQL operation');
+  }
+
+  // The exec method that uses the SQL converter and calls the appropriate method
+  async query(sqlQuery) {
+    const command = this._sqlToNosqlConverter(sqlQuery);
+    switch (command.operation) {
+      case 'createTable':
+        return await this.createTable(command.args.columns);
+      case 'dropTable':
+        return await this.dropTable();
+      case 'truncateTable':
+        return await this.truncateTable();
+      case 'insertOne':
+        return await this.insertOne(command.args.obj);
+      case 'select':
+        return await this.select(command.args.where, command.args.options);
+      case 'update':
+        return await this.update(command.args.where, command.args.newData);
+      case 'delete':
+        return await this.delete(command.args.where);
+      case 'getTables':
+        return await this.getTables();
+      case 'showTableDetail':
+        return await this.showTableDetail();
+      default:
+        throw new Error('Unsupported operation');
     }
   }
 

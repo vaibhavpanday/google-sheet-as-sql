@@ -20,6 +20,7 @@ Perform full **CRUD** operations, advanced filtering, sorting, and more — all 
 - 📊 ORDER BY, LIMIT, OFFSET
 - 🪰 Table tools: `createTable`, `dropTable`, `truncateTable`, `getTables`, `showTableDetail`
 - 📦 Lightweight, no database engine required
+- 📝 **SQL Query Feature**: Use SQL‑like queries via `query()` (replacing the old `exec()`)
 
 ---
 
@@ -56,12 +57,13 @@ You’re ready to roll! 🎉
 const GoogleSheetDB = require('google-sheet-as-sql');
 const credentials = require('./credentials.json');
 
+// Initialize with: credentials, sheetId, and sheetName (tab name)
 const db = new GoogleSheetDB(credentials, 'your-spreadsheet-id', 'Sheet1');
 
 (async () => {
   await db.createTable(['name', 'email', 'age', 'created_at']);
 
-  await db.insert([
+  await db.insertMany([
     { name: 'Alice', email: 'alice@example.com', age: '25', created_at: '2024-03-01' },
     { name: 'Bob', email: 'bob@example.com', age: '30', created_at: '2024-03-15' }
   ]);
@@ -88,36 +90,204 @@ const db = new GoogleSheetDB(credentials, 'your-spreadsheet-id', 'Sheet1');
 new GoogleSheetDB(credentials, sheetId, sheetName)
 ```
 
-- `credentials`: JSON object from your service account
-- `sheetId`: The ID from the Google Sheets URL
-- `sheetName`: Name of the tab/sheet (e.g. "Sheet1")
+- **credentials**: JSON object from your service account  
+- **sheetId**: The ID from the Google Sheets URL  
+- **sheetName**: Name of the tab/sheet (e.g. "Sheet1")
 
 ---
 
 ### ✅ Core Methods
 
-| Method                  | Description                                          |
-|-------------------------        |------------------------------------------------------|
-| `createTable(columns)`          | Creates the sheet/tab and sets headers               |
-| `dropTable()`                   | Deletes the sheet/tab entirely                       |
-| `truncateTable()`               | Clears all data, keeps header row                    |
-| `insertOne(obj)`                | Inserts a single row                                 |
-| `insertBeforeRow(where, data)`  | Inserts a single row before matches                  |
-| `insertAfterRow(where, data)`   | Inserts a single row after matches                   |
-| `replaceBeforeRow(where, data)` | Replaces the row before matches                      |
-| `insertMany(arrayy)`            | Inserts array of rows                                |
-| `select(where, options)`        | Reads rows with filtering, sorting, limits           |
-| `update(where, newData)`        | Updates rows matching filters                        |
-| `updateOrInsert(where, data)`   | Updates if exist otherwise insert rows               |
-| `delete(where)`                 | Deletes rows matching filters                        |
-| `getTables()`                   | Lists all sheet tabs                                 |
-| `showTableDetail()`             | Returns column names, total rows, preview row        |
+| Method                                  | Description                                           |
+|-----------------------------------------|-------------------------------------------------------|
+| `createTable(columns)`                  | Creates the sheet/tab and sets headers                |
+| `dropTable()`                           | Deletes the sheet/tab entirely                        |
+| `truncateTable()`                       | Clears all data, keeps header row                     |
+| `insertOne(obj)`                        | Inserts a single row                                  |
+| `insertBeforeRow(where, data)`          | Inserts a single row before matches                   |
+| `insertAfterRow(where, data)`           | Inserts a single row after matches                    |
+| `replaceBeforeRow(where, data)`         | Replaces the row before matches                       |
+| `insertMany(arrayy)`                    | Inserts array of rows                                 |
+| `select(where, options)`                | Reads rows with filtering, sorting, limits            |
+| `update(where, newData)`                | Updates rows matching filters                         |
+| `updateOrInsert(where, data)`           | Updates if exists otherwise insert rows               |
+| `delete(where)`                         | Deletes rows matching filters                         |
+| `getTables()`                           | Lists all sheet tabs                                  |
+| `showTableDetail()`                     | Returns column names, total rows, preview row         |
 
-## Two additional update/insert features
+#### Two additional update/insert features
 
-`updateOrInsertAfterRow(where, column, data)` : Update/insert after matchs
-`updateOrInsertBeforeRow(where, column, data, ignoreEmptyRows = false)` : Update/insert before matchs 
+- `updateOrInsertAfterRow(where, column, data)` : Update/insert after matches  
+- `updateOrInsertBeforeRow(where, column, data, ignoreEmptyRows = false)` : Update/insert before matches
 
+---
+
+## 📝 SQL Query Feature
+
+The `query` method allows you to run SQL‑like queries on your Google Sheet. This feature parses your query and translates it into the appropriate method call. (Note: The previous `exec` method has been replaced with `query`.)
+
+### Supported SQL‑like Commands
+
+- **CREATE TABLE**  
+  Create a new sheet/tab and set headers.
+
+- **DROP TABLE**  
+  Delete the sheet/tab entirely.
+
+- **TRUNCATE TABLE**  
+  Clear all data (except headers).
+
+- **INSERT INTO**  
+  Insert a single row.  
+  **Example SQL:**  
+  ```sql
+  INSERT INTO sheetId (id, name, age) VALUES ('1', 'Alice', '25')
+  ```
+
+- **SELECT**  
+  Read rows with optional filtering, sorting, LIMIT, and OFFSET.  
+  **Example SQL:**  
+  ```sql
+  SELECT * FROM sheetId WHERE name = 'Alice' ORDER BY age DESC LIMIT 5 OFFSET 0
+  ```
+
+- **UPDATE**  
+  Update rows matching a condition.  
+  **Example SQL:**  
+  ```sql
+  UPDATE sheetId SET name = 'Bob' WHERE id = '1'
+  ```
+
+- **DELETE**  
+  Delete rows based on a condition.  
+  **Example SQL:**  
+  ```sql
+  DELETE FROM sheetId WHERE id = '1'
+  ```
+
+- **GET TABLES**  
+  List all sheet tabs.  
+  **Example SQL:**  
+  ```sql
+  GET TABLES
+  ```
+
+- **SHOW TABLE DETAIL**  
+  Display sheet details including header information.  
+  **Example SQL:**  
+  ```sql
+  SHOW TABLE DETAIL
+  ```
+
+### Example Usage with `query`
+
+Below are detailed examples using the `query` method. In these SQL queries, the keyword `sheetId` is used to reference the target sheet.
+
+#### 1. Creating a Table
+
+```js
+const sql = "CREATE TABLE sheetId (id, name, age)";
+const createResult = await db.query(sql);
+console.log(createResult);
+```
+
+*Expected Output:*
+```js
+{
+  success: true,
+  message: 'Table created with headers.',
+  columns: [ 'id', 'name', 'age' ]
+}
+```
+
+#### 2. Inserting a Row
+
+```js
+const sql = "INSERT INTO sheetId (id, name, age) VALUES ('1', 'Alice', '25')";
+const insertResult = await db.query(sql);
+console.log(insertResult);
+```
+
+*Expected Output:*
+```js
+{
+  success: true,
+  updatedRange: 'Sheet1!A2:C2', // or the adjusted range based on headerStartColumn
+  insertedData: { id: '1', name: 'Alice', age: '25' }
+}
+```
+
+#### 3. Selecting Rows
+
+```js
+const sql = "SELECT * FROM sheetId WHERE name = 'Alice' ORDER BY age DESC LIMIT 5 OFFSET 0";
+const selectResult = await db.query(sql);
+console.log(selectResult);
+```
+
+*Expected Output:*
+```js
+[
+  { id: '1', name: 'Alice', age: '25', _row: 2 },
+  // ... other matching rows
+]
+```
+
+#### 4. Updating Rows
+
+```js
+const sql = "UPDATE sheetId SET name = 'Bob' WHERE id = '1'";
+const updateResult = await db.query(sql);
+console.log(updateResult);
+```
+
+*Expected Output:*
+```js
+{
+  success: true,
+  updatedCount: 1,
+  updatedRows: [ { row: 2, newData: [ '1', 'Bob', '25' ] } ]
+}
+```
+
+#### 5. Deleting Rows
+
+```js
+const sql = "DELETE FROM sheetId WHERE id = '1'";
+const deleteResult = await db.query(sql);
+console.log(deleteResult);
+```
+
+*Expected Output:*
+```js
+{ success: true, deletedCount: 1, deletedRows: [2] }
+```
+
+#### 6. Listing Tables
+
+```js
+const sql = "GET TABLES";
+const tablesResult = await db.query(sql);
+console.log(tablesResult);
+```
+
+*Expected Output:*
+```js
+{ success: true, tables: [ 'Sheet1', 'OtherSheet' ] }
+```
+
+#### 7. Showing Table Details
+
+```js
+const sql = "SHOW TABLE DETAIL";
+const detailResult = await db.query(sql);
+console.log(detailResult);
+```
+
+*Expected Output:*
+```js
+{ success: true, sheetName: 'Sheet1', columns: ['id', 'name', 'age'] }
+```
 
 ---
 
@@ -176,7 +346,7 @@ await db.select(
 
 ```js
 await db.insertOne(
-  { name: 'Charlie', age: '28', email: 'charlie@example.com' },
+  { name: 'Charlie', age: '28', email: 'charlie@example.com' }
 );
 
 await db.insertMany([
@@ -225,8 +395,8 @@ const detail = await db.showTableDetail();
 console.log(detail);
 /*
 {
-  sheetName: 'customers',
-  columns: ['name', 'email', 'age'],
+  sheetName: 'Sheet1',
+  columns: ['id', 'name', 'age']
 }
 */
 ```
@@ -254,4 +424,3 @@ Made with ❤️ by Vaibhav Panday
 > Want to contribute? PRs and issues welcome!
 
 💖 If you find this project useful, consider [buying me a coffee](https://buymeacoffee.com/vaibhavpanday).
-
