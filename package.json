@@ -1,6 +1,6 @@
 {
   "name": "google-sheet-as-sql",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Use Google Sheets like an SQL database with full CRUD, filters, sorting, and more.",
   "main": "index.js",
   "author": "Vaibhav Panday",
